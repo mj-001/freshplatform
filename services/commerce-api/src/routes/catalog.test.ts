@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+﻿import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
   serializerCompiler,
@@ -52,7 +52,7 @@ describe('GET /catalog', () => {
 
   beforeAll(async () => {
     app = buildTestApp({
-      erpnext: { listItems, getItem: vi.fn(), createQuotation: vi.fn(), submitQuotationAsSalesOrder: vi.fn() },
+      erpnext: { listItems, getItem: vi.fn(), listBatchesForItem: vi.fn() as any, createQuotation: vi.fn(), submitQuotationAsSalesOrder: vi.fn() },
       redis: { get: redisGet, setEx: redisSetEx },
     });
     await app.ready();
@@ -94,7 +94,7 @@ describe('GET /catalog/:itemCode', () => {
 
   beforeAll(async () => {
     app = buildTestApp({
-      erpnext: { listItems: vi.fn(), getItem, createQuotation: vi.fn(), submitQuotationAsSalesOrder: vi.fn() },
+      erpnext: { listItems: vi.fn(), getItem, listBatchesForItem: vi.fn() as any, createQuotation: vi.fn(), submitQuotationAsSalesOrder: vi.fn() },
       redis: { get: redisGet, setEx: redisSetEx },
     });
     await app.ready();
@@ -125,5 +125,89 @@ describe('GET /catalog/:itemCode', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual(sampleItem);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch info tests (new for slice/catalog-item-batches)
+// ---------------------------------------------------------------------------
+
+const batchNear = {
+  batchId: 'BATCH-2025-001',
+  qty: 50,
+  expiryDate: '2025-05-01',
+};
+
+const batchFar = {
+  batchId: 'BATCH-2025-002',
+  qty: 30,
+  expiryDate: '2025-05-15',
+};
+
+describe('GET /catalog/:itemCode — batch info', () => {
+  let app: FastifyInstance;
+  const getItem = vi.fn();
+  const listBatchesForItem = vi.fn();
+  const redisGet = vi.fn();
+  const redisSetEx = vi.fn();
+
+  beforeAll(async () => {
+    app = buildTestApp({
+      erpnext: {
+        listItems: vi.fn(),
+        getItem,
+        listBatchesForItem: listBatchesForItem as any,
+        createQuotation: vi.fn(),
+        submitQuotationAsSalesOrder: vi.fn(),
+      },
+      redis: { get: redisGet, setEx: redisSetEx },
+    });
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('nearestBatch picks the earlier of two expiry dates', async () => {
+    redisGet.mockResolvedValueOnce(null);
+    getItem.mockResolvedValueOnce(sampleItem);
+    // Return far batch first to ensure sorting — not insertion order — drives the result
+    listBatchesForItem.mockResolvedValueOnce([batchFar, batchNear]);
+    redisSetEx.mockResolvedValueOnce('OK');
+
+    const res = await app.inject({ method: 'GET', url: '/catalog/MANGO-APPLE-1KG' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().nearestBatch).toEqual(batchNear);
+    expect(redisSetEx).toHaveBeenCalledOnce();
+  });
+
+  it('nearestBatch is undefined when listBatchesForItem returns []', async () => {
+    redisGet.mockResolvedValueOnce(null);
+    getItem.mockResolvedValueOnce(sampleItem);
+    listBatchesForItem.mockResolvedValueOnce([]);
+    redisSetEx.mockResolvedValueOnce('OK');
+
+    const res = await app.inject({ method: 'GET', url: '/catalog/MANGO-APPLE-1KG' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().nearestBatch).toBeUndefined();
+  });
+
+  it('item detail cache hit skips both getItem and listBatchesForItem calls', async () => {
+    const cachedDetail = { ...sampleItem, nearestBatch: batchNear };
+    redisGet.mockResolvedValueOnce(JSON.stringify(cachedDetail));
+
+    const res = await app.inject({ method: 'GET', url: '/catalog/MANGO-APPLE-1KG' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(cachedDetail);
+    expect(getItem).not.toHaveBeenCalled();
+    expect(listBatchesForItem).not.toHaveBeenCalled();
   });
 });
