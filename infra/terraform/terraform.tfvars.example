@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in. NEVER commit terraform.tfvars.
+project_id  = "fresh-platform-dev"
+region      = "africa-south1"
+environment = "dev"
+
+# Bumped by CI on each deploy. Leave default for first apply.
+# commerce_api_image = "africa-south1-docker.pkg.dev/fresh-platform-dev/commerce-api/commerce-api:abc123"
+
+db_tier         = "db-f1-micro"
+redis_memory_gb = 1
+min_instances   = 0
+max_instances   = 5

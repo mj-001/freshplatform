@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-test-build:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: commerce
+          POSTGRES_USER: commerce
+          POSTGRES_PASSWORD: commerce
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U commerce -d commerce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm format:check
+
+      - run: pnpm typecheck
+
+      - run: pnpm lint
+
+      - run: pnpm test
+        env:
+          DATABASE_URL: postgres://commerce:commerce@localhost:5432/commerce
+          REDIS_URL: redis://localhost:6379
+          # ERPNext / M-Pesa / JWT mocked at the boundary in tests; values just need to parse.
+          ERPNEXT_URL: https://example.com
+          ERPNEXT_API_KEY: test
+          ERPNEXT_API_SECRET: test
+          PUBSUB_PROJECT_ID: fresh-platform-test
+          JWT_SECRET: this_is_a_test_secret_with_more_than_thirty_two_chars
+          JWT_ISSUER: fresh-platform
+          JWT_AUDIENCE: test
+          MPESA_CONSUMER_KEY: test
+          MPESA_CONSUMER_SECRET: test
+          MPESA_SHORTCODE: '174379'
+          MPESA_PASSKEY: test
+          MPESA_CALLBACK_URL: https://example.com/cb
+          BRAND_NAME: Test
+          SUPPORT_EMAIL: test@example.com
+
+      - run: pnpm build
